@@ -431,16 +431,33 @@ void setupCamera()
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
   
-  config.frame_size = FRAMESIZE_VGA;
-  config.jpeg_quality = 10;
-  config.fb_count = 1;
-
+  // Optimize for streaming performance
+  config.frame_size = FRAMESIZE_QVGA;  // 320x240 - better balance of quality and speed
+  config.jpeg_quality = 10;            // Lower quality (10-63, lower is better quality)
+  config.fb_count = 2;                // Double buffering
+  config.xclk_freq_hz = 20000000;     // 20MHz XCLK
+  
   // camera init
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) 
   {
     Serial.printf("Camera init failed with error 0x%x", err);
     return;
+  }  
+
+  // Additional camera settings for better performance
+  sensor_t * s = esp_camera_sensor_get();
+  if (s) {
+    s->set_framesize(s, FRAMESIZE_QVGA);  // Apply QVGA
+    s->set_quality(s, 10);                // Adjust quality for better transmission
+    s->set_brightness(s, 1);              // Slightly increase brightness
+    s->set_contrast(s, 1);                // Slightly increase contrast
+    s->set_saturation(s, 1);              // Slightly increase saturation
+    s->set_special_effect(s, 0);          // No special effect
+    s->set_vflip(s, 0);                   // No vertical flip
+    s->set_hmirror(s, 0);                 // No horizontal mirror
+    s->set_awb_gain(s, 1);                // Enable Auto White Balance gain
+    s->set_wb_mode(s, 0);                 // Auto White Balance mode
   }  
 
   if (psramFound())
@@ -456,8 +473,7 @@ void sendCameraPicture()
   {
     return;
   }
-  unsigned long  startTime1 = millis();
-  //capture a frame
+
   camera_fb_t * fb = esp_camera_fb_get();
   if (!fb) 
   {
@@ -465,23 +481,11 @@ void sendCameraPicture()
       return;
   }
 
-  unsigned long  startTime2 = millis();
   wsCamera.binary(cameraClientId, fb->buf, fb->len);
   esp_camera_fb_return(fb);
     
-  //Wait for message to be delivered
-  while (true)
-  {
-    AsyncWebSocketClient * clientPointer = wsCamera.client(cameraClientId);
-    if (!clientPointer || !(clientPointer->queueIsFull()))
-    {
-      break;
-    }
-    delay(1);
-  }
-  
-  unsigned long  startTime3 = millis();  
-  Serial.printf("Time taken Total: %d|%d|%d\n",startTime3 - startTime1, startTime2 - startTime1, startTime3-startTime2 );
+  // Simple delay instead of complex queue handling
+  delay(1);
 }
 
 void setUpPinModes()
@@ -511,12 +515,15 @@ void setUpPinModes()
 void setup(void) 
 {
   setUpPinModes();
-  //Serial.begin(115200);
+  Serial.begin(115200);  // Enable Serial for debugging
 
   WiFi.softAP(ssid, password);
   IPAddress IP = WiFi.softAPIP();
   Serial.print("AP IP address: ");
   Serial.println(IP);
+
+  // Remove the problematic WebSocket configuration lines
+  // and just use the defaults
 
   server.on("/", HTTP_GET, handleRoot);
   server.onNotFound(handleNotFound);
@@ -533,11 +540,16 @@ void setup(void)
   setupCamera();
 }
 
-
 void loop() 
 {
   wsCamera.cleanupClients(); 
   wsCarInput.cleanupClients(); 
-  sendCameraPicture(); 
-  Serial.printf("SPIRam Total heap %d, SPIRam Free Heap %d\n", ESP.getPsramSize(), ESP.getFreePsram());
+  sendCameraPicture();
+  // Reduce frequency of debug output to improve performance
+  static unsigned long lastDebugOutput = 0;
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastDebugOutput > 5000) {  // Print every 5 seconds
+    Serial.printf("SPIRam Total heap %d, SPIRam Free Heap %d\n", ESP.getPsramSize(), ESP.getFreePsram());
+    lastDebugOutput = currentMillis;
+  }
 }
